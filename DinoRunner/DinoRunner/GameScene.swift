@@ -17,12 +17,15 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
     var backgroundNode: SKNode!
     var cactusNode: SKNode!
     var dinosaurNode: SKNode!
-    var birdNode: SKNode!
     
     //score
     var scoreNode: SKLabelNode!
     var resetInstructions: SKLabelNode!
     var score = 0 as Int
+    var hitCactus = false
+    var jumping = false
+    var cactusPositionOnJumpStart: CGFloat?
+    var cactusComingTowardsDino: SKNode? = nil
     
     //sound effects
     let jumpSound = SKAction.playSoundFileNamed("dino.assets/sounds/jump", waitForCompletion: false)
@@ -38,7 +41,7 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
     //generic vars
     var groundHeight: CGFloat?
     var dinoYPosition: CGFloat?
-    var groundSpeed = 500 as CGFloat
+    var groundSpeed = 300 as CGFloat
     
     //consts
     let dinoHopForce = 700 as Int
@@ -52,7 +55,6 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
     let groundCategory = 1 << 0 as UInt32
     let dinoCategory = 1 << 1 as UInt32
     let cactusCategory = 1 << 2 as UInt32
-    let birdCategory = 1 << 3 as UInt32
     
     override func didMove(to view: SKView) {
         
@@ -82,10 +84,6 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         cactusNode = SKNode()
         cactusNode.zPosition = foreground
         
-        //birds
-        birdNode = SKNode()
-        birdNode.zPosition = foreground
-        
         //score
         score = 0
         scoreNode = SKLabelNode(fontNamed: "Arial")
@@ -108,7 +106,6 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         gameNode.addChild(backgroundNode)
         gameNode.addChild(dinosaurNode)
         gameNode.addChild(cactusNode)
-        gameNode.addChild(birdNode)
         gameNode.addChild(scoreNode)
         gameNode.addChild(resetInstructions)
         self.addChild(gameNode)
@@ -132,40 +129,87 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
     
     override func update(_ currentTime: TimeInterval) {
         // Called before each frame is rendered
-        if(gameNode.speed > 0){
-            groundSpeed += 0.2
-            
-            score += 1
-            scoreNode.text = "Score: \(score/5)"
-            
-            if(currentTime - timeSinceLastSpawn > spawnRate){
+        if(gameNode.speed > 0) {
+            if(currentTime - timeSinceLastSpawn > spawnRate) {
                 timeSinceLastSpawn = currentTime
                 spawnRate = Double.random(in: 1.0 ..< 3.5)
-                
-                if(Int.random(in: 0...10) < 8){
-                    spawnCactus()
+                spawnCactus()
+            }
+            updateCactusComingTowardsDino()
+            
+            if let groundPosition = dinoYPosition {
+                if dinoSprite.position.y <= groundPosition {
+                    if jumping && jumpedOverCactus() && !hitCactus {
+                        score += 1
+                        scoreNode.text = "Score: \(score)"
+                    }
+                    jumping = false
                 } else {
-                    spawnBird()
+                    jumping = true
+                    setCactusPositionOnJumpStart()
                 }
+            }
+            
+            if cactusMovedPassedDino() {
+                resetCactusComingTowardsDino()
             }
         }
     }
     
     func didBegin(_ contact: SKPhysicsContact) {
-        if(hitCactus(contact) || hitBird(contact)){
-            run(dieSound)
-            gameOver()
+        if(hitCactus(contact)) {
+//            run(dieSound)
+//            gameOver()
+            hitCactus = true
         }
+    }
+    
+    func didEnd(_ contact: SKPhysicsContact) {
+        if(hitCactus(contact)) {
+            hitCactus = false
+        }
+    }
+    
+    func jumpedOverCactus() -> Bool {
+        if let cactusPositionOnJumpStart = cactusPositionOnJumpStart, cactusPositionOnJumpStart > (dinoSprite.position.x + dinoSprite.frame.width) {
+            if let cactusComingTowardsDino = cactusComingTowardsDino {
+                if (cactusComingTowardsDino.position.x + cactusComingTowardsDino.frame.width) < dinoSprite.position.x {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+    
+    func updateCactusComingTowardsDino() {
+        if cactusComingTowardsDino == nil {
+            cactusComingTowardsDino = cactusNode.children.first { $0.position.x > dinoSprite.position.x }
+        }
+    }
+    
+    func resetCactusComingTowardsDino() {
+        self.cactusPositionOnJumpStart = nil
+        self.cactusComingTowardsDino = nil
+    }
+    
+    func setCactusPositionOnJumpStart() {
+        if cactusPositionOnJumpStart == nil {
+            cactusPositionOnJumpStart = cactusComingTowardsDino?.position.x ?? nil
+        }
+    }
+    
+    func cactusMovedPassedDino() -> Bool {
+        if let cactusComingTowardsDino = cactusComingTowardsDino, !jumping {
+            if (cactusComingTowardsDino.position.x + cactusComingTowardsDino.frame.width) < dinoSprite.position.x {
+                return true
+            }
+        }
+        return false
     }
     
     func hitCactus(_ contact: SKPhysicsContact) -> Bool {
         return contact.bodyA.categoryBitMask & cactusCategory == cactusCategory ||
             contact.bodyB.categoryBitMask & cactusCategory == cactusCategory
-    }
-    
-    func hitBird(_ contact: SKPhysicsContact) -> Bool {
-        return contact.bodyA.categoryBitMask & birdCategory == birdCategory ||
-                contact.bodyB.categoryBitMask & birdCategory == birdCategory
     }
     
     func resetGame() {
@@ -175,7 +219,6 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         score = 0
         
         cactusNode.removeAllChildren()
-        birdNode.removeAllChildren()
         
         resetInstructions.fontColor = SKColor.white
         
@@ -338,7 +381,7 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         dinoSprite.physicsBody?.isDynamic = true
         dinoSprite.physicsBody?.mass = 1.0
         dinoSprite.physicsBody?.categoryBitMask = dinoCategory
-        dinoSprite.physicsBody?.contactTestBitMask = birdCategory | cactusCategory
+        dinoSprite.physicsBody?.contactTestBitMask = cactusCategory
         dinoSprite.physicsBody?.collisionBitMask = groundCategory
         
         dinoYPosition = getGroundHeight() + dinoTexture1.size().height * dinoScale
@@ -347,7 +390,8 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
     }
     
     func spawnCactus() {
-        let cactusTextures = ["cactus1", "cactus2", "cactus3", "doubleCactus", "tripleCactus"]
+//        let cactusTextures = ["cactus1", "cactus2", "cactus3", "doubleCactus", "tripleCactus"]
+        let cactusTextures = ["cactus1"]
         let cactusScale = 3.0 as CGFloat
         
         //texture
@@ -386,46 +430,6 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         
         sprite.position = CGPoint(x: distanceToMove, y: getGroundHeight() + texture.size().height)
         sprite.run(moveAndRemove)
-    }
-    
-    func spawnBird() {
-        //textures
-        let birdTexture1 = SKTexture(imageNamed: "dino.assets/dinosaurs/flyer1")
-        let birdTexture2 = SKTexture(imageNamed: "dino.assets/dinosaurs/flyer2")
-        let birdScale = 3.0 as CGFloat
-        birdTexture1.filteringMode = .nearest
-        birdTexture2.filteringMode = .nearest
-        
-        //animation
-        let screenWidth = self.frame.size.width
-        let distanceOffscreen = 50.0 as CGFloat
-        let distanceToMove = screenWidth + distanceOffscreen + birdTexture1.size().width * birdScale
-        
-        let flapAnimation = SKAction.animate(with: [birdTexture1, birdTexture2], timePerFrame: 0.5)
-        let moveBird = SKAction.moveBy(x: -distanceToMove, y: 0.0, duration: TimeInterval(screenWidth / groundSpeed))
-        let removeBird = SKAction.removeFromParent()
-        let moveAndRemove = SKAction.sequence([moveBird, removeBird])
-        
-        //sprite
-        let birdSprite = SKSpriteNode()
-        birdSprite.size = birdTexture1.size()
-        birdSprite.setScale(birdScale)
-        
-        //physics
-        let birdContact = CGSize(width: birdTexture1.size().width * birdScale,
-                                 height: birdTexture1.size().height * birdScale)
-        birdSprite.physicsBody = SKPhysicsBody(rectangleOf: birdContact)
-        birdSprite.physicsBody?.isDynamic = false
-        birdSprite.physicsBody?.mass = 1.0
-        birdSprite.physicsBody?.categoryBitMask = birdCategory
-        birdSprite.physicsBody?.contactTestBitMask = dinoCategory
-        
-        birdSprite.position = CGPoint(x: distanceToMove,
-                                      y: getGroundHeight() + birdTexture1.size().height * birdScale + 20)
-        birdSprite.run(SKAction.group([moveAndRemove, SKAction.repeatForever(flapAnimation)]))
-        
-        //add to scene
-        birdNode.addChild(birdSprite)
     }
     
     func getGroundHeight() -> CGFloat {
